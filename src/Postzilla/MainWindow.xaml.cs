@@ -30,7 +30,7 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         AppWindow.TitleBar.PreferredTheme = Microsoft.UI.Windowing.TitleBarTheme.Dark;
-        AppWindow.Resize(new SizeInt32(1560, 940));
+        SizeAndCenter();
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico"));
         TitleBarIcon.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
             new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.png")));
@@ -45,6 +45,15 @@ public sealed partial class MainWindow : Window
     }
 
     private XamlRoot XamlRoot => Root.XamlRoot;
+
+    /// <summary>Sizes the window relative to the monitor's work area, so it looks the same on any resolution or DPI scale.</summary>
+    private void SizeAndCenter()
+    {
+        var area = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Primary).WorkArea;
+        var width = (int)(area.Width * 0.75);
+        var height = (int)(area.Height * 0.8);
+        AppWindow.MoveAndResize(new RectInt32(area.X + (area.Width - width) / 2, area.Y + (area.Height - height) / 2, width, height));
+    }
 
     private RequestEditor? CurrentEditor => (Tabs.SelectedItem as TabViewItem)?.Content as RequestEditor;
 
