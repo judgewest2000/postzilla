@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Brunozilla.Views.KeyValueEditor"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:Brunozilla.Models">
+    <Grid RowSpacing="4">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid ColumnSpacing="6" Padding="12,0,12,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="32" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="40" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="1" x:Name="KeyHeader" Text="Key" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock Grid.Column="2" x:Name="ValueHeader" Text="Value" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" Click="Add_Click" ToolTipService.ToolTip="Add row">
+                <FontIcon Glyph="&#xE710;" FontSize="12" />
+            </Button>
+        </Grid>
+        <ListView x:Name="ItemsList" Grid.Row="1" SelectionMode="None">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="MinHeight" Value="38" />
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.ItemTemplate>
+                <DataTemplate x:DataType="models:KeyValueItem">
+                    <Grid ColumnSpacing="6" Padding="0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="32" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="40" />
+                        </Grid.ColumnDefinitions>
+                        <CheckBox MinWidth="0" IsChecked="{x:Bind IsEnabledNullable, Mode=TwoWay}" />
+                        <TextBox Grid.Column="1" PlaceholderText="key" FontFamily="{StaticResource CodeFont}" IsSpellCheckEnabled="False"
+                                 Text="{x:Bind Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBox Grid.Column="2" PlaceholderText="value" FontFamily="{StaticResource CodeFont}" IsSpellCheckEnabled="False"
+                                 Text="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Grid.Column="3" Style="{StaticResource IconButtonStyle}" Tag="{x:Bind}" Click="Remove_Click" ToolTipService.ToolTip="Remove">
+                            <FontIcon Glyph="&#xE74D;" FontSize="12" />
+                        </Button>
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+    </Grid>
+</UserControl>
