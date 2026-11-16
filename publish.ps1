@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds a production (Release, self-contained) copy of Brunozilla.
+    Builds a production (Release, self-contained) copy of Postzilla.
 
 .EXAMPLE
     .\publish.ps1                      # x64 into .\publish\win-x64
@@ -22,7 +22,7 @@ $output = Join-Path $PSScriptRoot "publish\$Runtime"
 $platform = $Runtime.Substring(4)
 
 if (-not $SkipTests) {
-    dotnet test tests\Brunozilla.Tests -c Release -nologo -v q
+    dotnet test tests\Postzilla.Tests -c Release -nologo -v q
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 }
 
@@ -31,7 +31,7 @@ if (Test-Path $output) { Remove-Item $output -Recurse -Force }
 $versionArgs = @()
 if ($Version) { $versionArgs += "-p:Version=$Version" }
 
-dotnet publish src\Brunozilla\Brunozilla.csproj @versionArgs `
+dotnet publish src\Postzilla\Postzilla.csproj @versionArgs `
     -c Release `
     -r $Runtime `
     -p:Platform=$platform `
@@ -43,10 +43,10 @@ dotnet publish src\Brunozilla\Brunozilla.csproj @versionArgs `
 if ($LASTEXITCODE -ne 0) { throw 'Publish failed.' }
 
 if ($Zip) {
-    $zipPath = Join-Path $PSScriptRoot "publish\Brunozilla-$Runtime.zip"
+    $zipPath = Join-Path $PSScriptRoot "publish\Postzilla-$Runtime.zip"
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
     Compress-Archive -Path "$output\*" -DestinationPath $zipPath
     Write-Host "Zipped to $zipPath"
 }
 
-Write-Host "Published to $output\Brunozilla.exe" -ForegroundColor Green
+Write-Host "Published to $output\Postzilla.exe" -ForegroundColor Green

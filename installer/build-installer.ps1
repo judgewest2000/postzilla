@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Publishes Brunozilla and builds Setup.exe (Inno Setup) plus the zip used by install.ps1.
+    Publishes Postzilla and builds Setup.exe (Inno Setup) plus the zip used by install.ps1.
 .EXAMPLE
     .\build-installer.ps1 -Platform x64 -Version 1.0.0
 #>
@@ -30,8 +30,8 @@ if (-not $iscc) {
 }
 if (-not $iscc) { throw 'Inno Setup 6 not found. Install with: winget install JRSoftware.InnoSetup' }
 
-& $iscc "/DArch=$arch" "/DAppVersion=$Version" (Join-Path $PSScriptRoot 'Brunozilla.iss')
+& $iscc "/DArch=$arch" "/DAppVersion=$Version" (Join-Path $PSScriptRoot 'Postzilla.iss')
 if ($LASTEXITCODE) { throw 'iscc failed' }
 
 Write-Host 'Upload these to the GitHub release:' -ForegroundColor Green
-Get-ChildItem (Join-Path $root 'publish') -Filter "Brunozilla-*$arch*" -File | ForEach-Object { Write-Host "  $($_.FullName)" }
+Get-ChildItem (Join-Path $root 'publish') -Filter "Postzilla-*$arch*" -File | ForEach-Object { Write-Host "  $($_.FullName)" }

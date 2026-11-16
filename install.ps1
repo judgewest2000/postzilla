@@ -1,17 +1,17 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Installs (or uninstalls) the Brunozilla app for the current user.
+    Installs (or uninstalls) the Postzilla app for the current user.
 .EXAMPLE
-    & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/judgewest2000/brunozilla/main/install.ps1")))
+    & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/judgewest2000/postzilla/main/install.ps1")))
 .EXAMPLE
-    & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/judgewest2000/brunozilla/main/install.ps1"))) -Uninstall
+    & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/judgewest2000/postzilla/main/install.ps1"))) -Uninstall
 #>
 [CmdletBinding()]
 param(
-    [string]$Repo = 'judgewest2000/brunozilla',
+    [string]$Repo = 'judgewest2000/postzilla',
     [string]$Version = 'latest',
-    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\Brunozilla'),
+    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'Programs\Postzilla'),
     [switch]$Uninstall
 )
 
@@ -19,8 +19,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-$appName = 'Brunozilla'
-$exeName = 'Brunozilla.exe'
+$appName = 'Postzilla'
+$exeName = 'Postzilla.exe'
 $startMenu = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$appName.lnk"
 $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$appName"
 
