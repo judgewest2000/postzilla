@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Runtime;
 using Postzilla.Models;
 using Postzilla.Services;
 using Postzilla.Views;
@@ -471,7 +472,51 @@ public sealed partial class MainWindow : Window
         }
         (tab.Content as RequestEditor)?.Close();
         Tabs.TabItems.Remove(tab);
+        ReclaimMemory();
     }
+
+    private CancellationTokenSource? _reclaimCts;
+
+    /// <summary>
+    /// A closed tab's native editors (Scintilla documents, D3D devices: tens of MB each) are only freed once the GC finalises
+    /// their WinRT wrappers <em>and</em> XAML then renders a frame to process its deferred releases, layer by layer.
+    /// An idle window renders nothing, so without this the memory stays committed indefinitely.
+    /// </summary>
+    private async void ReclaimMemory()
+    {
+        _reclaimCts?.Cancel();
+        var cts = _reclaimCts = new CancellationTokenSource();
+        CompositionTarget.Rendering += KeepRendering;
+        try
+        {
+            // Each GC + frame frees another layer (wrappers → XAML elements → native controls → D3D/Scintilla), so continue until memory settles.
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            var last = long.MaxValue;
+            for (int i = 0, stable = 0; i < 40 && stable < 4; i++)
+            {
+                await Task.Delay(500, cts.Token);
+                await Task.Run(() =>
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+                });
+                process.Refresh();
+                var now = process.PrivateMemorySize64;
+                stable = now > last - (1 << 20) ? stable + 1 : 0;
+                last = Math.Min(last, now);
+            }
+            GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+            await Task.Run(() => GC.Collect());
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            CompositionTarget.Rendering -= KeepRendering;
+        }
+    }
+
+    private static void KeepRendering(object? sender, object e) { }
 
     // ------------------------------------------------------------------ accelerators
 
