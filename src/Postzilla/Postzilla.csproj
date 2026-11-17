@@ -22,12 +22,11 @@
     <Content Include="Assets\AppIcon.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\AppIcon.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\AboutArt.png" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\monaco\**\*" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Assets\editor\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" />
+    <PackageReference Include="WinUIEdit" Version="0.0.5-prerelease" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Postzilla.Core\Postzilla.Core.csproj" />
@@ -39,5 +38,7 @@
       <_WinUIResource Include="$(OutDir)**\*.xbf;$(OutDir)$(AssemblyName).pri" />
     </ItemGroup>
     <Copy SourceFiles="@(_WinUIResource)" DestinationFiles="@(_WinUIResource->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" />
+    <!-- WinUIEdit ships a ~90 MB native debug symbol file; users don't need it. -->
+    <Delete Files="$(PublishDir)WinUIEditor.pdb" />
   </Target>
 </Project>
