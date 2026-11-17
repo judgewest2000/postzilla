@@ -1,9 +1,11 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using Postzilla.GraphQL;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.Web.WebView2.Core;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using VirtualKey = Windows.System.VirtualKey;
+using WinUIEditor;
 
 namespace Postzilla.Views;
 
@@ -16,40 +18,60 @@ public sealed class EditorCommandEventArgs(EditorCommand command, int offset) : 
 }
 
 /// <summary>
-/// Monaco code editor hosted in WebView2. <see cref="Text"/> is mirrored on every edit so it can be read synchronously.
+/// Native Scintilla code editor (WinUIEdit). Offsets exposed to callers are UTF-16 offsets into LF-normalised <see cref="Text"/>.
 /// </summary>
-public sealed class CodeEditor : UserControl
+public sealed partial class CodeEditor : UserControl
 {
-    private const string HostName = "postzilla.assets";
-    private static Task<CoreWebView2Environment>? s_environment;
+    private const string FontName = "Cascadia Mono";
+    private const int FontPoints = 10;
+    private const char ListSeparator = '\n';
+    private const string CompletionTriggers = "$@(:{";
 
-    private readonly WebView2 _web = new();
-    private string _text = "";
+    private readonly CodeEditorControl _control = new();
+    private readonly TextBlock _placeholderBlock;
+    private readonly DispatcherQueueTimer _cursorTimer;
+    private string? _text = "";   // null = stale, re-read from the editor on demand
     private string _language = "plaintext";
-    private string _placeholder = "";
     private bool _readOnly;
     private bool _wordWrap;
-    private bool _initStarted;
-    private bool _ready;
-    private bool _focusWhenReady;
+    private bool _hostEdit;
     private bool _closed;
+    private int _version;
+    private Dictionary<string, CompletionItem> _shownItems = new();
 
     public CodeEditor()
     {
-        _web.DefaultBackgroundColor = Microsoft.UI.Colors.Transparent;
+        _placeholderBlock = new TextBlock
+        {
+            IsHitTestVisible = false,
+            FontFamily = new FontFamily(FontName),
+            FontSize = 13,
+            Opacity = 0.5,
+            TextWrapping = TextWrapping.Wrap,
+        };
         Content = new Border
         {
-            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ControlFillColorDefaultBrush"],
-            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ControlStrokeColorDefaultBrush"],
+            Background = (Brush)Application.Current.Resources["ControlFillColorDefaultBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["ControlStrokeColorDefaultBrush"],
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(0, 1, 1, 1),
-            Child = _web,
+            Child = new Grid { Children = { _control, _placeholderBlock, CreateFindBar() } },
         };
         HorizontalAlignment = HorizontalAlignment.Stretch;
         VerticalAlignment = VerticalAlignment.Stretch;
-        Loaded += async (_, _) => await InitAsync();
-        ActualThemeChanged += (_, _) => Post(new JsonObject { ["type"] = "setTheme", ["theme"] = ThemeName });
+
+        _cursorTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
+        _cursorTimer.Interval = TimeSpan.FromMilliseconds(120);
+        _cursorTimer.IsRepeating = false;
+        _cursorTimer.Tick += (_, _) =>
+        {
+            if (!_closed && Editor.SelectionEmpty) CursorMoved?.Invoke(this, CaretOffset);
+        };
+
+        InitEditor();
+        PreviewKeyDown += OnPreviewKeyDown;
+        _control.Loaded += (_, _) => UpdatePlaceholder();
     }
 
     public event EventHandler? TextChanged;
@@ -61,14 +83,19 @@ public sealed class CodeEditor : UserControl
 
     public string Text
     {
-        get => _text;
+        get => _text ??= Normalize(Editor.GetText(Editor.Length));
         set
         {
             value = Normalize(value);
-            if (value == _text) return;
+            if (value == Text) return;
+            HostEdit(() =>
+            {
+                Editor.SetText(value);
+                Editor.EmptyUndoBuffer();
+                Editor.GotoPos(0);
+            });
             _text = value;
-            Post(new JsonObject { ["type"] = "setText", ["text"] = value, ["undoable"] = false });
-            Post(new JsonObject { ["type"] = "reveal" });
+            UpdatePlaceholder();
         }
     }
 
@@ -79,188 +106,311 @@ public sealed class CodeEditor : UserControl
         {
             if (value == _language) return;
             _language = value;
-            Post(new JsonObject { ["type"] = "setLanguage", ["language"] = value });
+            ApplyLanguage();
         }
     }
 
     public string Placeholder
     {
-        get => _placeholder;
-        set
-        {
-            if (value == _placeholder) return;
-            _placeholder = value;
-            Post(new JsonObject { ["type"] = "setPlaceholder", ["placeholder"] = value });
-        }
+        get => _placeholderBlock.Text;
+        set => _placeholderBlock.Text = value;
     }
 
-    // Set these in XAML; they are applied when the editor initialises.
-    public bool IsReadOnly { get => _readOnly; set => _readOnly = value; }
-    public bool WordWrap { get => _wordWrap; set => _wordWrap = value; }
+    public bool IsReadOnly
+    {
+        get => _readOnly;
+        set { _readOnly = value; Editor.ReadOnly = value; }
+    }
+
+    public bool WordWrap
+    {
+        get => _wordWrap;
+        set { _wordWrap = value; Editor.WrapMode = value ? Wrap.Word : Wrap.None; }
+    }
 
     /// <summary>Replaces the whole document as a single undoable edit, keeping the caret.</summary>
     public void ReplaceText(string text)
     {
         text = Normalize(text);
-        if (text == _text) return;
-        _text = text;
-        Post(new JsonObject { ["type"] = "setText", ["text"] = text, ["undoable"] = true });
+        if (text == Text) return;
+        var caret = CaretOffset;
+        var firstLine = Editor.FirstVisibleLine;
+        Editor.BeginUndoAction();
+        Editor.TargetWholeDocument();
+        Editor.ReplaceTarget(-1, text);
+        Editor.EndUndoAction();
+        var pos = Editor.PositionRelativeCodeUnits(0, Math.Min(caret, text.Length));
+        Editor.SetSel(pos, pos);
+        Editor.FirstVisibleLine = firstLine;
     }
 
     public void FocusEditor()
     {
-        if (!_ready)
-        {
-            _focusWhenReady = true;
-            return;
-        }
-        _web.Focus(FocusState.Programmatic);
-        Post(new JsonObject { ["type"] = "focus" });
+        _control.Focus(FocusState.Programmatic);
+        Editor.Focus = true;
     }
 
-    /// <summary>Shuts down the browser instance; call when the owning tab is closed.</summary>
     public void Close()
     {
         _closed = true;
-        _ready = false;
-        _web.Close();
+        _cursorTimer.Stop();
+        Editor.AutoCCancel();
     }
 
-    private string ThemeName => ActualTheme == ElementTheme.Light ? "light" : "dark";
+    private Editor Editor => _control.Editor;
+
+    private int CaretOffset => (int)Editor.CountCodeUnits(0, Editor.CurrentPos);
 
     private static string Normalize(string? text) => (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n');
 
-    private static Task<CoreWebView2Environment> GetEnvironmentAsync() => s_environment ??= CreateEnvironmentAsync();
-
-    private static async Task<CoreWebView2Environment> CreateEnvironmentAsync()
+    private void InitEditor()
     {
-        var dataFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Postzilla", "WebView2");
-        return await CoreWebView2Environment.CreateWithOptionsAsync(null, dataFolder, new CoreWebView2EnvironmentOptions());
+        var e = Editor;
+        e.EOLMode = EndOfLine.Lf;
+        e.PasteConvertEndings = true;
+        e.TabWidth = 2;
+        e.UseTabs = false;
+        e.ModEventMask = ModificationFlags.InsertText | ModificationFlags.DeleteText;
+        e.AutoCSeparator = ListSeparator;
+        e.AutoCTypeSeparator = 0x1E;
+        e.AutoCOrder = Ordering.Custom;
+        e.AutoCIgnoreCase = true;
+        e.AutoCAutoHide = false;
+        e.AutoCDropRestOfWord = false;
+        e.AutoCMaxHeight = 12;
+        e.AutoCMaxWidth = 0;
+
+        e.Modified += OnModified;
+        e.CharAdded += OnCharAdded;
+        e.AutoCSelection += OnAutoCSelection;
+        e.AutoCCharDeleted += (_, _) => _ = ShowCompletionsAsync(false);
+        e.UpdateUI += (_, args) =>
+        {
+            if ((args.Updated & (int)Update.Selection) == 0 || _closed) return;
+            _cursorTimer.Stop();
+            _cursorTimer.Start();
+        };
+        e.StyleNeeded += (_, args) => StyleGraphQL(args.Position);
+
+        _control.SyntaxHighlightingApplied += (_, _) => ApplyStyles();
+        _control.DefaultColorsChanged += (_, _) => { ApplyStyles(); ApplyFindColors(); };
+        InitFindIndicator();
+        ApplyLanguage();
     }
 
-    private async Task InitAsync()
+    private void ApplyLanguage()
     {
-        if (_initStarted || _closed) return;
-        _initStarted = true;
-        try
+        _control.HighlightingLanguage = _language switch
         {
-            await _web.EnsureCoreWebView2Async(await GetEnvironmentAsync());
+            "json" or "html" or "xml" or "yaml" or "javascript" => _language,
+            "graphql" => "graphql",   // unknown to WinUIEdit → container lexer, styled by StyleGraphQL
+            _ => "plaintext",
+        };
+        ApplyStyles();
+    }
+
+    // Style slots used by the GraphQL container lexer (indexes < 32 so they don't clash with Scintilla's predefined styles).
+    private static readonly (GraphQLTokenKind Kind, int Dark, int Light, bool Italic)[] GraphQLStyles =
+    [
+        (GraphQLTokenKind.Comment, 0x6A9955, 0x008000, true),
+        (GraphQLTokenKind.String, 0xCE9178, 0xA31515, false),
+        (GraphQLTokenKind.Number, 0xB5CEA8, 0x098658, false),
+        (GraphQLTokenKind.Keyword, 0x569CD6, 0x0000FF, false),
+        (GraphQLTokenKind.Constant, 0x569CD6, 0x0000FF, false),
+        (GraphQLTokenKind.Variable, 0x4FC1FF, 0x0070C1, false),
+        (GraphQLTokenKind.Directive, 0xDCDCAA, 0x795E26, false),
+        (GraphQLTokenKind.Type, 0x4EC9B0, 0x267F99, false),
+        (GraphQLTokenKind.Field, 0x9CDCFE, 0x001080, false),
+        (GraphQLTokenKind.OperationName, 0xDCDCAA, 0x795E26, false),
+    ];
+
+    private static int Bgr(int rgb) => ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
+
+    private void ApplyStyles()
+    {
+        var e = Editor;
+        for (var style = 0; style < 40; style++)
+        {
+            e.StyleSetFont(style, FontName);
+            e.StyleSetSize(style, FontPoints);
         }
-        catch (Exception ex)
+        if (_language == "graphql")
         {
-            Content = new TextBlock { Text = $"Code editor unavailable (WebView2): {ex.Message}", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(8) };
+            var dark = ActualTheme != ElementTheme.Light;
+            foreach (var (kind, darkColor, lightColor, italic) in GraphQLStyles)
+            {
+                e.StyleSetFore((int)kind, Bgr(dark ? darkColor : lightColor));
+                e.StyleSetItalic((int)kind, italic);
+            }
+            StyleGraphQL(e.Length);
+        }
+        DispatcherQueue.TryEnqueue(UpdatePlaceholder);
+    }
+
+    private void StyleGraphQL(long _)
+    {
+        if (_language != "graphql") return;
+        // Tokenising the whole document keeps brace context correct; queries are small enough for this to be cheap.
+        var e = Editor;
+        var text = e.GetText(e.Length);
+        e.StartStyling(0, 0);
+        var pos = 0L;
+        var offset = 0;
+        foreach (var token in GraphQLHighlighter.Tokenize(text))
+        {
+            if (token.Start > offset)
+            {
+                var gap = e.PositionRelativeCodeUnits(pos, token.Start - offset) - pos;
+                e.SetStyling(gap, 0);
+                pos += gap;
+            }
+            var len = e.PositionRelativeCodeUnits(pos, token.Length) - pos;
+            e.SetStyling(len, token.Kind == GraphQLTokenKind.Punctuation ? 0 : (int)token.Kind);
+            pos += len;
+            offset = token.Start + token.Length;
+        }
+        if (e.Length > pos) e.SetStyling(e.Length - pos, 0);
+    }
+
+    private void HostEdit(Action edit)
+    {
+        _hostEdit = true;
+        Editor.ReadOnly = false;
+        try { edit(); }
+        finally
+        {
+            Editor.ReadOnly = _readOnly;
+            _hostEdit = false;
+        }
+    }
+
+    private void OnModified(Editor sender, ModifiedEventArgs args)
+    {
+        if ((args.ModificationType & (int)(ModificationFlags.InsertText | ModificationFlags.DeleteText)) == 0) return;
+        _text = null;
+        _version++;
+        QueueFindRefresh();
+        if (_hostEdit) return;
+        UpdatePlaceholder();
+        TextChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void UpdatePlaceholder()
+    {
+        _placeholderBlock.Visibility = Editor.Length == 0 && !string.IsNullOrEmpty(_placeholderBlock.Text) ? Visibility.Visible : Visibility.Collapsed;
+        if (_placeholderBlock.Visibility == Visibility.Collapsed || XamlRoot == null) return;
+        var px = 0;
+        for (var m = 0; m < 5; m++) px += Editor.GetMarginWidthN(m);
+        var scale = XamlRoot.RasterizationScale;
+        _placeholderBlock.Margin = new Thickness((px + 4) / scale, 1, 4, 0);
+    }
+
+    private void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        var ctrl = IsDown(VirtualKey.Control);
+        var shift = IsDown(VirtualKey.Shift);
+        var alt = IsDown(VirtualKey.Menu);
+        EditorCommand? command = e.Key switch
+        {
+            VirtualKey.Enter when ctrl && !shift && !alt => EditorCommand.Send,
+            VirtualKey.F5 when !ctrl && !shift && !alt => EditorCommand.Send,
+            VirtualKey.S when ctrl && !shift && !alt => EditorCommand.Save,
+            VirtualKey.F when shift && alt && !ctrl => EditorCommand.Format,
+            VirtualKey.F1 => EditorCommand.Docs,
+            _ => null,
+        };
+        if (command != null)
+        {
+            e.Handled = true;
+            Editor.AutoCCancel();
+            CommandInvoked?.Invoke(this, new EditorCommandEventArgs(command.Value, CaretOffset));
+        }
+        else if (HandleFindKey(e.Key, ctrl, shift, alt))
+        {
+            e.Handled = true;
+        }
+        else if (e.Key == VirtualKey.Space && ctrl && !shift && !alt && _findBox.FocusState == FocusState.Unfocused)
+        {
+            e.Handled = true;
+            _ = ShowCompletionsAsync(true);
+        }
+    }
+
+    private static bool IsDown(VirtualKey key) =>
+        Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
+    private void OnCharAdded(Editor sender, CharAddedEventArgs args)
+    {
+        var c = (char)args.Ch;
+        if (char.IsLetterOrDigit(c) || c == '_' || CompletionTriggers.Contains(c)) _ = ShowCompletionsAsync(false);
+        else if (Editor.AutoCActive()) Editor.AutoCCancel();
+    }
+
+    private async Task ShowCompletionsAsync(bool explicitRequest)
+    {
+        if (CompletionSource == null || _readOnly || _closed) return;
+        var version = _version;
+        var text = Text;
+        var offset = CaretOffset;
+        CompletionResult result;
+        try { result = await CompletionSource(text, offset, explicitRequest); }
+        catch { return; }
+        if (_closed || version != _version || offset != CaretOffset) return;
+
+        var e = Editor;
+        if (result.Items.Count == 0)
+        {
+            e.AutoCCancel();
             return;
         }
 
-        var core = _web.CoreWebView2;
-        var settings = core.Settings;
-        settings.AreBrowserAcceleratorKeysEnabled = false; // F5 must send, not reload
-        settings.AreDefaultContextMenusEnabled = false;
-        settings.IsStatusBarEnabled = false;
-        settings.IsZoomControlEnabled = false;
-#if !DEBUG
-        settings.AreDevToolsEnabled = false;
-#endif
-        core.SetVirtualHostNameToFolderMapping(HostName, Path.Combine(AppContext.BaseDirectory, "Assets"), CoreWebView2HostResourceAccessKind.Allow);
-        core.WebMessageReceived += OnWebMessage;
-        core.NavigationCompleted += (_, e) => { if (!e.IsSuccess && !_closed) Reload(); };
-        core.ProcessFailed += (_, _) => { if (!_closed) DispatcherQueue.TryEnqueue(Reload); };
-        core.Navigate($"https://{HostName}/editor/editor.html");
-    }
-
-    private int _reloads;
-
-    private void Reload()
-    {
-        if (_reloads++ >= 3) return;
-        _ready = false;
-        _web.CoreWebView2?.Reload();
-    }
-
-    private void OnWebMessage(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
-    {
-        if (JsonNode.Parse(args.WebMessageAsJson) is not JsonObject msg) return;
-        switch ((string?)msg["type"])
+        var shown = new Dictionary<string, CompletionItem>();
+        var lines = new List<string>(result.Items.Count);
+        foreach (var item in result.Items)
         {
-            case "ready":
-                _ready = true;
-                Post(new JsonObject
-                {
-                    ["type"] = "init",
-                    ["text"] = _text,
-                    ["language"] = _language,
-                    ["placeholder"] = _placeholder,
-                    ["readOnly"] = _readOnly,
-                    ["wordWrap"] = _wordWrap,
-                    ["theme"] = ThemeName,
-                });
-                if (_focusWhenReady)
-                {
-                    _focusWhenReady = false;
-                    FocusEditor();
-                }
-                break;
-            case "loadError":
-                Reload();
-                break;
-            case "change":
-                _text = (string?)msg["text"] ?? "";
-                TextChanged?.Invoke(this, EventArgs.Empty);
-                break;
-            case "cursor":
-                CursorMoved?.Invoke(this, (int?)msg["offset"] ?? 0);
-                break;
-            case "command":
-                var command = (string?)msg["command"] switch
-                {
-                    "send" => EditorCommand.Send,
-                    "save" => EditorCommand.Save,
-                    "format" => EditorCommand.Format,
-                    "docs" => EditorCommand.Docs,
-                    _ => (EditorCommand?)null,
-                };
-                if (command != null) CommandInvoked?.Invoke(this, new EditorCommandEventArgs(command.Value, (int?)msg["offset"] ?? 0));
-                break;
-            case "complete":
-                _ = RespondToCompletionAsync(msg);
-                break;
+            var display = CompletionRow.Encode(item);
+            if (shown.TryAdd(display, item)) lines.Add(display);
+        }
+        _shownItems = shown;
+
+        var start = Math.Clamp(result.ReplaceStart, 0, offset);
+        var startPos = e.PositionRelativeCodeUnits(0, start);
+        e.AutoCShow(e.CurrentPos - startPos, string.Join(ListSeparator, lines));
+        DispatcherQueue.TryEnqueue(() => FitCompletionPopup(lines.Count));
+    }
+
+    // WinUIEdit sizes the popup (and its shadow) for 32 dip rows; our template uses compact rows, so shrink it to fit.
+    private const double CompletionRowHeight = 22;
+    private const int CompletionVisibleRows = 12;
+
+    private void FitCompletionPopup(int itemCount)
+    {
+        if (XamlRoot == null || !Editor.AutoCActive()) return;
+        foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(XamlRoot))
+        {
+            if (popup.Child is not AutocompletionControl list || double.IsNaN(list.Height)) continue;
+            var fitted = Math.Min(itemCount, CompletionVisibleRows) * CompletionRowHeight + 6;
+            var excess = list.Height - fitted;
+            if (excess <= 0) continue;
+            var caretTop = _control.TransformToVisual(null).TransformPoint(
+                new Windows.Foundation.Point(0, Editor.PointYFromPosition(Editor.CurrentPos) / XamlRoot.RasterizationScale)).Y;
+            if (popup.VerticalOffset < caretTop) popup.VerticalOffset += excess;   // shown above the caret: keep it attached
+            list.Height = fitted;
         }
     }
 
-    private async Task RespondToCompletionAsync(JsonObject msg)
+    private void OnAutoCSelection(Editor sender, AutoCSelectionEventArgs args)
     {
-        var id = (int?)msg["id"] ?? 0;
-        var items = new JsonArray();
-        var start = 0;
-        try
-        {
-            if (CompletionSource != null)
-            {
-                var result = await CompletionSource((string?)msg["text"] ?? "", (int?)msg["offset"] ?? 0, (bool?)msg["explicit"] ?? false);
-                start = result.ReplaceStart;
-                foreach (var item in result.Items)
-                {
-                    items.Add(new JsonObject
-                    {
-                        ["label"] = item.Label,
-                        ["kind"] = item.Kind.ToString(),
-                        ["insertText"] = item.InsertText,
-                        ["detail"] = item.Detail,
-                        ["description"] = item.Description,
-                        ["deprecated"] = item.IsDeprecated,
-                    });
-                }
-            }
-        }
-        finally
-        {
-            Post(new JsonObject { ["type"] = "response", ["id"] = id, ["start"] = start, ["items"] = items });
-        }
-    }
-
-    private void Post(JsonObject message)
-    {
-        if (!_ready || _closed) return;
-        _web.CoreWebView2?.PostWebMessageAsJson(message.ToJsonString());
+        if (!_shownItems.TryGetValue(args.Text, out var item)) return;
+        var e = Editor;
+        e.AutoCCancel();   // stop Scintilla inserting the display text; insert the real text instead
+        var start = args.Position;
+        var end = e.CurrentPos;
+        e.SetTargetRange(start, end);
+        e.ReplaceTarget(-1, item.InsertText);
+        var caret = e.PositionRelativeCodeUnits(start, item.InsertText.Length);
+        e.SetSel(caret, caret);
+        if (item.InsertText.EndsWith(": ", StringComparison.Ordinal))
+            DispatcherQueue.TryEnqueue(() => _ = ShowCompletionsAsync(false));
     }
 }

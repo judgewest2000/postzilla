@@ -338,7 +338,7 @@ public sealed partial class RequestEditor : UserControl
     private static bool IsDown(VirtualKey key) =>
         InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(CoreVirtualKeyStates.Down);
 
-    // Keys pressed inside a Monaco editor never reach XAML, so the editor forwards them.
+    // The code editor handles these keys itself (before Scintilla sees them) and forwards them.
     private async void Editor_CommandInvoked(object? sender, EditorCommandEventArgs e)
     {
         switch (e.Command)
