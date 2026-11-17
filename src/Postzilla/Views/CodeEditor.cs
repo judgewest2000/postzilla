@@ -20,7 +20,7 @@ public sealed class EditorCommandEventArgs(EditorCommand command, int offset) : 
 /// <summary>
 /// Native Scintilla code editor (WinUIEdit). Offsets exposed to callers are UTF-16 offsets into LF-normalised <see cref="Text"/>.
 /// </summary>
-public sealed class CodeEditor : UserControl
+public sealed partial class CodeEditor : UserControl
 {
     private const string FontName = "Cascadia Mono";
     private const int FontPoints = 10;
@@ -56,7 +56,7 @@ public sealed class CodeEditor : UserControl
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(0, 1, 1, 1),
-            Child = new Grid { Children = { _control, _placeholderBlock } },
+            Child = new Grid { Children = { _control, _placeholderBlock, CreateFindBar() } },
         };
         HorizontalAlignment = HorizontalAlignment.Stretch;
         VerticalAlignment = VerticalAlignment.Stretch;
@@ -193,7 +193,8 @@ public sealed class CodeEditor : UserControl
         e.StyleNeeded += (_, args) => StyleGraphQL(args.Position);
 
         _control.SyntaxHighlightingApplied += (_, _) => ApplyStyles();
-        _control.DefaultColorsChanged += (_, _) => ApplyStyles();
+        _control.DefaultColorsChanged += (_, _) => { ApplyStyles(); ApplyFindColors(); };
+        InitFindIndicator();
         ApplyLanguage();
     }
 
@@ -288,6 +289,7 @@ public sealed class CodeEditor : UserControl
         if ((args.ModificationType & (int)(ModificationFlags.InsertText | ModificationFlags.DeleteText)) == 0) return;
         _text = null;
         _version++;
+        QueueFindRefresh();
         if (_hostEdit) return;
         UpdatePlaceholder();
         TextChanged?.Invoke(this, EventArgs.Empty);
@@ -323,7 +325,11 @@ public sealed class CodeEditor : UserControl
             Editor.AutoCCancel();
             CommandInvoked?.Invoke(this, new EditorCommandEventArgs(command.Value, CaretOffset));
         }
-        else if (e.Key == VirtualKey.Space && ctrl && !shift && !alt)
+        else if (HandleFindKey(e.Key, ctrl, shift, alt))
+        {
+            e.Handled = true;
+        }
+        else if (e.Key == VirtualKey.Space && ctrl && !shift && !alt && _findBox.FocusState == FocusState.Unfocused)
         {
             e.Handled = true;
             _ = ShowCompletionsAsync(true);
@@ -362,9 +368,7 @@ public sealed class CodeEditor : UserControl
         var lines = new List<string>(result.Items.Count);
         foreach (var item in result.Items)
         {
-            var display = Clean(item.Label);
-            if (!string.IsNullOrEmpty(item.Detail)) display += "  " + Clean(item.Detail);
-            if (item.IsDeprecated) display += "  (deprecated)";
+            var display = CompletionRow.Encode(item);
             if (shown.TryAdd(display, item)) lines.Add(display);
         }
         _shownItems = shown;
@@ -372,9 +376,28 @@ public sealed class CodeEditor : UserControl
         var start = Math.Clamp(result.ReplaceStart, 0, offset);
         var startPos = e.PositionRelativeCodeUnits(0, start);
         e.AutoCShow(e.CurrentPos - startPos, string.Join(ListSeparator, lines));
+        DispatcherQueue.TryEnqueue(() => FitCompletionPopup(lines.Count));
     }
 
-    private static string Clean(string s) => s.Replace(ListSeparator, ' ').Replace('\r', ' ').Replace((char)0x1E, ' ');
+    // WinUIEdit sizes the popup (and its shadow) for 32 dip rows; our template uses compact rows, so shrink it to fit.
+    private const double CompletionRowHeight = 22;
+    private const int CompletionVisibleRows = 12;
+
+    private void FitCompletionPopup(int itemCount)
+    {
+        if (XamlRoot == null || !Editor.AutoCActive()) return;
+        foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(XamlRoot))
+        {
+            if (popup.Child is not AutocompletionControl list || double.IsNaN(list.Height)) continue;
+            var fitted = Math.Min(itemCount, CompletionVisibleRows) * CompletionRowHeight + 6;
+            var excess = list.Height - fitted;
+            if (excess <= 0) continue;
+            var caretTop = _control.TransformToVisual(null).TransformPoint(
+                new Windows.Foundation.Point(0, Editor.PointYFromPosition(Editor.CurrentPos) / XamlRoot.RasterizationScale)).Y;
+            if (popup.VerticalOffset < caretTop) popup.VerticalOffset += excess;   // shown above the caret: keep it attached
+            list.Height = fitted;
+        }
+    }
 
     private void OnAutoCSelection(Editor sender, AutoCSelectionEventArgs args)
     {
