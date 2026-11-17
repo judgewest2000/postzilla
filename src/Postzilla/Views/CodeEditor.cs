@@ -64,14 +64,11 @@ public sealed partial class CodeEditor : UserControl
         _cursorTimer = DispatcherQueue.GetForCurrentThread().CreateTimer();
         _cursorTimer.Interval = TimeSpan.FromMilliseconds(120);
         _cursorTimer.IsRepeating = false;
-        _cursorTimer.Tick += (_, _) =>
-        {
-            if (!_closed && Editor.SelectionEmpty) CursorMoved?.Invoke(this, CaretOffset);
-        };
+        _cursorTimer.Tick += OnCursorTimerTick;
 
         InitEditor();
         PreviewKeyDown += OnPreviewKeyDown;
-        _control.Loaded += (_, _) => UpdatePlaceholder();
+        _control.Loaded += OnControlLoaded;
     }
 
     public event EventHandler? TextChanged;
@@ -150,11 +147,31 @@ public sealed partial class CodeEditor : UserControl
         Editor.Focus = true;
     }
 
+    /// <summary>
+    /// Detaches from WinUIEdit; required for the editor to be collected. WinUIEdit's events (and the dispatcher timer's)
+    /// aren't visible to the XAML reference tracker, so their handlers strongly root this control in a cycle via <see cref="_control"/>.
+    /// </summary>
     public void Close()
     {
+        if (_closed) return;
         _closed = true;
         _cursorTimer.Stop();
-        Editor.AutoCCancel();
+        _cursorTimer.Tick -= OnCursorTimerTick;
+
+        var e = Editor;
+        e.AutoCCancel();
+        e.Modified -= OnModified;
+        e.CharAdded -= OnCharAdded;
+        e.AutoCSelection -= OnAutoCSelection;
+        e.AutoCCharDeleted -= OnAutoCCharDeleted;
+        e.UpdateUI -= OnUpdateUI;
+        e.StyleNeeded -= OnStyleNeeded;
+        _control.SyntaxHighlightingApplied -= OnSyntaxHighlightingApplied;
+        _control.DefaultColorsChanged -= OnDefaultColorsChanged;
+        _control.Loaded -= OnControlLoaded;
+        PreviewKeyDown -= OnPreviewKeyDown;
+        CompletionSource = null;
+        _shownItems = new();
     }
 
     private Editor Editor => _control.Editor;
@@ -183,19 +200,40 @@ public sealed partial class CodeEditor : UserControl
         e.Modified += OnModified;
         e.CharAdded += OnCharAdded;
         e.AutoCSelection += OnAutoCSelection;
-        e.AutoCCharDeleted += (_, _) => _ = ShowCompletionsAsync(false);
-        e.UpdateUI += (_, args) =>
-        {
-            if ((args.Updated & (int)Update.Selection) == 0 || _closed) return;
-            _cursorTimer.Stop();
-            _cursorTimer.Start();
-        };
-        e.StyleNeeded += (_, args) => StyleGraphQL(args.Position);
+        e.AutoCCharDeleted += OnAutoCCharDeleted;
+        e.UpdateUI += OnUpdateUI;
+        e.StyleNeeded += OnStyleNeeded;
 
-        _control.SyntaxHighlightingApplied += (_, _) => ApplyStyles();
-        _control.DefaultColorsChanged += (_, _) => { ApplyStyles(); ApplyFindColors(); };
+        _control.SyntaxHighlightingApplied += OnSyntaxHighlightingApplied;
+        _control.DefaultColorsChanged += OnDefaultColorsChanged;
         InitFindIndicator();
         ApplyLanguage();
+    }
+
+    private void OnCursorTimerTick(DispatcherQueueTimer sender, object args)
+    {
+        if (!_closed && Editor.SelectionEmpty) CursorMoved?.Invoke(this, CaretOffset);
+    }
+
+    private void OnControlLoaded(object sender, RoutedEventArgs args) => UpdatePlaceholder();
+
+    private void OnAutoCCharDeleted(Editor sender, object args) => _ = ShowCompletionsAsync(false);
+
+    private void OnUpdateUI(Editor sender, UpdateUIEventArgs args)
+    {
+        if ((args.Updated & (int)Update.Selection) == 0 || _closed) return;
+        _cursorTimer.Stop();
+        _cursorTimer.Start();
+    }
+
+    private void OnStyleNeeded(Editor sender, StyleNeededEventArgs args) => StyleGraphQL(args.Position);
+
+    private void OnSyntaxHighlightingApplied(object? sender, ElementTheme args) => ApplyStyles();
+
+    private void OnDefaultColorsChanged(object? sender, ElementTheme args)
+    {
+        ApplyStyles();
+        ApplyFindColors();
     }
 
     private void ApplyLanguage()

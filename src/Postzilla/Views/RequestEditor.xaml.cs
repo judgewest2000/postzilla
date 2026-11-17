@@ -90,6 +90,7 @@ public sealed partial class RequestEditor : UserControl
     /// <summary>Releases the embedded code editors; call when the tab is closed.</summary>
     public void Close()
     {
+        _sendCts?.Cancel();
         foreach (var editor in new[] { QueryBox, VariablesBox, BodyBox, ResponseBodyBox }) editor.Close();
     }
 
