@@ -447,6 +447,9 @@ public sealed partial class RequestEditor : UserControl
         StatusText.Text = "Sending…";
         StatusText.Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
         TimeText.Text = SizeText.Text = "";
+        ResponseBodyBox.Text = "";
+        ResponseHeadersList.ItemsSource = null;
+        ResponseHeadersTab.Text = "Headers";
 
         try
         {
