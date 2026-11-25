@@ -40,7 +40,8 @@ public sealed partial class MainWindow : Window
         _collections.AddRange(_store.LoadCollections());
         _environments = _store.LoadEnvironments();
         RefreshEnvironmentBox();
-        RebuildTree(expandAll: true);
+        LoadExpandedState();
+        RebuildTree();
         OpenNewTab();
         Root.Loaded += async (_, _) => await CheckForUpdateAsync();
     }
@@ -115,31 +116,92 @@ public sealed partial class MainWindow : Window
 
     // ------------------------------------------------------------------ tree
 
-    private void RebuildTree(bool expandAll = false)
+    private void RebuildTree()
     {
-        var expanded = new HashSet<string>(Flatten(RootEntries).Where(e => e.IsExpanded).Select(e => e.Id));
+        _trackExpansion = false;
         RootEntries.Clear();
         foreach (var c in _collections)
         {
             var entry = TreeEntry.ForCollection(c);
-            entry.IsExpanded = expandAll || expanded.Contains(entry.Id);
-            AddChildren(entry, c, c.Items, expanded, expandAll);
+            entry.IsExpanded = _expandedIds.Contains(entry.Id);
+            AddChildren(entry, c, c.Items);
             RootEntries.Add(entry);
         }
         EmptyHint.Visibility = _collections.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateAllTabHeaders();
+        // Containers are realized later and can reset nested expansion; re-apply it, then resume tracking user changes.
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            foreach (var entry in Flatten(RootEntries))
+                entry.IsExpanded = entry.Kind != TreeEntryKind.Request && _expandedIds.Contains(entry.Id);
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _trackExpansion = true);
+        });
     }
 
-    private static void AddChildren(TreeEntry parent, ApiCollection c, List<CollectionNode> nodes, HashSet<string> expanded, bool expandAll)
+    private void AddChildren(TreeEntry parent, ApiCollection c, List<CollectionNode> nodes)
     {
         foreach (var node in nodes)
         {
             var entry = TreeEntry.ForNode(c, node);
-            entry.IsExpanded = node.IsFolder && (expandAll || expanded.Contains(entry.Id));
-            AddChildren(entry, c, node.Children, expanded, expandAll);
+            entry.IsExpanded = node.IsFolder && _expandedIds.Contains(entry.Id);
+            AddChildren(entry, c, node.Children);
             parent.Children.Add(entry);
         }
     }
+
+    // ------------------------------------------------------------------ expanded state
+
+    // The app owns which entries are expanded: the TreeView resets its own state when the tree is rebuilt or dragged.
+    private HashSet<string> _expandedIds = new();
+    private bool _trackExpansion;
+
+    private void LoadExpandedState()
+    {
+        var saved = _store.LoadExpandedIds();
+        if (saved != null) { _expandedIds = saved; return; }
+        var containerIds = _collections
+            .SelectMany(c => new[] { c.Id }.Concat(FolderIds(c.Items)));
+        _expandedIds = new HashSet<string>(containerIds);
+    }
+
+    private static IEnumerable<string> FolderIds(IEnumerable<CollectionNode> nodes) =>
+        nodes.Where(n => n.IsFolder).SelectMany(n => new[] { n.Id }.Concat(FolderIds(n.Children)));
+
+    private void SaveExpandedState()
+    {
+        var existingIds = _collections.SelectMany(c => new[] { c.Id }.Concat(FolderIds(c.Items))).ToHashSet();
+        _expandedIds.IntersectWith(existingIds);
+        _store.SaveExpandedIds(_expandedIds);
+    }
+
+    private void SetExpanded(TreeEntry entry, bool expanded)
+    {
+        if (entry.Kind == TreeEntryKind.Request) return;
+        var changed = expanded ? _expandedIds.Add(entry.Id) : _expandedIds.Remove(entry.Id);
+        entry.IsExpanded = expanded;
+        if (changed) SaveExpandedState();
+    }
+
+    private void CollectionTree_Expanding(TreeView sender, TreeViewExpandingEventArgs args)
+    {
+        if (_trackExpansion && !_dragging && args.Item is TreeEntry entry) SetExpanded(entry, true);
+    }
+
+    private void CollectionTree_Collapsed(TreeView sender, TreeViewCollapsedEventArgs args)
+    {
+        if (_trackExpansion && !_dragging && args.Item is TreeEntry entry) SetExpanded(entry, false);
+    }
+
+    private void SetAllExpanded(bool expanded)
+    {
+        if (expanded) _expandedIds.UnionWith(_collections.SelectMany(c => new[] { c.Id }.Concat(FolderIds(c.Items))));
+        else _expandedIds.Clear();
+        SaveExpandedState();
+        RebuildTree();
+    }
+
+    private void ExpandAll_Click(object sender, RoutedEventArgs e) => SetAllExpanded(true);
+    private void CollapseAll_Click(object sender, RoutedEventArgs e) => SetAllExpanded(false);
 
     private static IEnumerable<TreeEntry> Flatten(IEnumerable<TreeEntry> entries) =>
         entries.SelectMany(e => new[] { e }.Concat(Flatten(e.Children)));
@@ -150,7 +212,7 @@ public sealed partial class MainWindow : Window
     {
         if (args.InvokedItem is not TreeEntry entry) return;
         if (entry.Kind == TreeEntryKind.Request) OpenNode(entry.Collection, entry.Node!);
-        else entry.IsExpanded = !entry.IsExpanded;
+        else SetExpanded(entry, !entry.IsExpanded);
     }
 
     private void CollectionTree_RightTapped(object sender, RightTappedRoutedEventArgs e)
@@ -205,6 +267,7 @@ public sealed partial class MainWindow : Window
     // ------------------------------------------------------------------ drag & drop
 
     private TreeEntry? _dragEntry;
+    private bool _dragging;
     private DragEventHandler? _dragOverHandler, _dragLeaveHandler, _dropHandler;
 
     private sealed record DropTarget(List<CollectionNode> List, int Index, string Caption, Thickness Indicator);
@@ -228,6 +291,7 @@ public sealed partial class MainWindow : Window
     {
         _dragEntry = args.Items.FirstOrDefault() as TreeEntry;
         if (_dragEntry?.Node == null) { args.Cancel = true; return; }
+        _dragging = true;
         args.Data.RequestedOperation = DataPackageOperation.Move;
         args.Data.SetText(_dragEntry.Label);
     }
@@ -301,15 +365,22 @@ public sealed partial class MainWindow : Window
             editor.Collection = to;
             editor.NotifyStateChanged();
         }
+        if (target.Kind != TreeEntryKind.Request) _expandedIds.Add(target.Id);
+        SaveExpandedState();
         RebuildTree();
-        if (target.Kind != TreeEntryKind.Request && FindEntry(target.Id) is { } parent) parent.IsExpanded = true;
+    }
+
+    private void CollectionTree_DragItemsCompleted(TreeView sender, TreeViewDragItemsCompletedEventArgs args)
+    {
+        _dragEntry = null;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _dragging = false);
     }
 
     private void SaveCollection(ApiCollection c, string? expandId = null)
     {
         _store.Save(c);
+        if (expandId != null && _expandedIds.Add(expandId)) SaveExpandedState();
         RebuildTree();
-        if (expandId != null && FindEntry(expandId) is { } entry) entry.IsExpanded = true;
     }
 
     private async Task NewRequestInAsync(TreeEntry parent)

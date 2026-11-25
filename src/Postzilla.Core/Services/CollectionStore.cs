@@ -29,6 +29,7 @@ public sealed class CollectionStore
     public string RootDirectory { get; }
     public string CollectionsDirectory => Path.Combine(RootDirectory, "collections");
     private string EnvironmentsFile => Path.Combine(RootDirectory, "environments.json");
+    private string ExpandedFile => Path.Combine(RootDirectory, "expanded.json");
 
     /// <summary>Creates the data folder and an example collection on first run.</summary>
     public void EnsureInitialized()
@@ -89,6 +90,27 @@ public sealed class CollectionStore
     {
         Directory.CreateDirectory(RootDirectory);
         WriteAtomic(EnvironmentsFile, JsonSerializer.Serialize(environments, JsonUtil.Options));
+    }
+
+    /// <summary>Ids of expanded collections/folders in the sidebar, or null if never saved.</summary>
+    public HashSet<string>? LoadExpandedIds()
+    {
+        try
+        {
+            return File.Exists(ExpandedFile)
+                ? JsonSerializer.Deserialize<HashSet<string>>(File.ReadAllText(ExpandedFile), JsonUtil.Options)
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    public void SaveExpandedIds(IEnumerable<string> ids)
+    {
+        Directory.CreateDirectory(RootDirectory);
+        WriteAtomic(ExpandedFile, JsonSerializer.Serialize(ids.ToList(), JsonUtil.Options));
     }
 
     /// <summary>Imports a Postzilla or Postman collection file. The result is not yet saved.</summary>

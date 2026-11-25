@@ -45,6 +45,12 @@
                 <Grid Padding="8,0,0,0">
                     <TextBlock Text="Collections" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Style="{StaticResource IconButtonStyle}" Click="ExpandAll_Click" AutomationProperties.Name="Expand all" ToolTipService.ToolTip="Expand all">
+                            <FontIcon Glyph="&#xE972;" FontSize="14" />
+                        </Button>
+                        <Button Style="{StaticResource IconButtonStyle}" Click="CollapseAll_Click" AutomationProperties.Name="Collapse all" ToolTipService.ToolTip="Collapse all">
+                            <FontIcon Glyph="&#xE971;" FontSize="14" />
+                        </Button>
                         <Button Style="{StaticResource IconButtonStyle}" Click="NewCollection_Click" ToolTipService.ToolTip="New collection">
                             <FontIcon Glyph="&#xE8F4;" FontSize="14" />
                         </Button>
@@ -57,7 +63,8 @@
                     </StackPanel>
                 </Grid>
                 <TreeView x:Name="CollectionTree" Grid.Row="1" ItemsSource="{x:Bind RootEntries}" SelectionMode="Single"
-                          ItemInvoked="CollectionTree_ItemInvoked" RightTapped="CollectionTree_RightTapped" CanDragItems="True" CanReorderItems="False" AllowDrop="True" DragItemsStarting="CollectionTree_DragItemsStarting">
+                          ItemInvoked="CollectionTree_ItemInvoked" RightTapped="CollectionTree_RightTapped" CanDragItems="True" CanReorderItems="False" AllowDrop="True" DragItemsStarting="CollectionTree_DragItemsStarting" DragItemsCompleted="CollectionTree_DragItemsCompleted"
+                          Expanding="CollectionTree_Expanding" Collapsed="CollectionTree_Collapsed">
                     <TreeView.ItemTemplate>
                         <DataTemplate x:DataType="views:TreeEntry">
                             <TreeViewItem ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" HorizontalContentAlignment="Stretch"
