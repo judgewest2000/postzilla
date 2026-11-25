@@ -77,6 +77,29 @@ public sealed class ApiCollection
         }
         return null;
     }
+
+    /// <summary>
+    /// Moves <paramref name="node"/> from <paramref name="from"/> into <paramref name="targetList"/> (a list inside
+    /// <paramref name="to"/>) at <paramref name="index"/>, measured before removal. Returns false if the move is invalid.
+    /// </summary>
+    public static bool MoveNode(ApiCollection from, CollectionNode node, ApiCollection to, List<CollectionNode> targetList, int index)
+    {
+        var sourceList = from.FindParentList(node);
+        if (sourceList == null || IsWithin(node, targetList)) return false;
+        if (targetList != to.Items && !to.Items.Any(n => IsWithin(n, targetList))) return false;
+
+        var oldIndex = sourceList.IndexOf(node);
+        index = Math.Clamp(index, 0, targetList.Count);
+        if (sourceList == targetList && (index == oldIndex || index == oldIndex + 1)) return false;
+
+        sourceList.RemoveAt(oldIndex);
+        if (sourceList == targetList && index > oldIndex) index--;
+        targetList.Insert(index, node);
+        return true;
+    }
+
+    public static bool IsWithin(CollectionNode node, List<CollectionNode> list) =>
+        node.Children == list || node.Children.Any(c => IsWithin(c, list));
 }
 
 public sealed class AppEnvironment

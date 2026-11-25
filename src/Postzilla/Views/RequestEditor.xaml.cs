@@ -21,6 +21,7 @@ public sealed partial class RequestEditor : UserControl
     private static readonly string[] BodyModeNames = { "No body", "JSON", "Text", "Form URL-encoded", "Multipart form", "GraphQL" };
     private static readonly string[] AuthModeNames = { "No auth", "Bearer token", "Basic auth", "API key (header)" };
     private static readonly Dictionary<string, GqlSchema> SchemaCache = new(StringComparer.OrdinalIgnoreCase);
+    private string? _schemaUrl;
     private const int MaxDisplayChars = 2_000_000;
 
     private readonly Func<ApiCollection?, IReadOnlyDictionary<string, string>> _variables;
@@ -122,7 +123,7 @@ public sealed partial class RequestEditor : UserControl
 
         if (r.BodyMode == BodyMode.GraphQL)
         {
-            if (SchemaCache.TryGetValue(ResolvedUrl(r.Url), out var cached)) SetSchema(cached);
+            if (SchemaCache.TryGetValue(ResolvedUrl(r.Url), out var cached)) SetSchema(cached, ResolvedUrl(r.Url));
             if (r.BodyMode == BodyMode.GraphQL) SelectTab(BodyTab);
         }
         else if (r.BodyMode != BodyMode.None)
@@ -521,8 +522,8 @@ public sealed partial class RequestEditor : UserControl
 
     private async void FetchSchema_Click(object sender, RoutedEventArgs e) => await FetchSchemaAsync();
 
-    /// <param name="quiet">Don't open the docs panel or report failures.</param>
-    private async Task<bool> FetchSchemaAsync(bool quiet = false)
+    /// <param name="quiet">Don't open the docs panel or report failures (unless <paramref name="reportErrors"/>).</param>
+    private async Task<bool> FetchSchemaAsync(bool quiet = false, bool reportErrors = false)
     {
         var request = GetRequest();
         FetchSchemaButton.IsEnabled = false;
@@ -530,15 +531,16 @@ public sealed partial class RequestEditor : UserControl
         try
         {
             var schema = await GraphQLService.FetchSchemaAsync(request, _variables(Collection), CancellationToken.None);
-            SchemaCache[ResolvedUrl(request.Url)] = schema;
-            SetSchema(schema);
+            var url = ResolvedUrl(request.Url);
+            SchemaCache[url] = schema;
+            SetSchema(schema, url);
             if (!quiet) DocsToggle.IsChecked = true;
             return true;
         }
         catch (Exception ex)
         {
             SchemaStatus.Text = "Schema not loaded";
-            if (!quiet) ShowInfo(InfoBarSeverity.Error, "Couldn't load GraphQL schema", ex.Message);
+            if (!quiet || reportErrors) ShowInfo(InfoBarSeverity.Error, "Couldn't load GraphQL schema", ex.Message);
             return false;
         }
         finally
@@ -547,9 +549,23 @@ public sealed partial class RequestEditor : UserControl
         }
     }
 
-    private void SetSchema(GqlSchema schema)
+    /// <summary>Makes <see cref="_schema"/> match the current URL, loading it if needed; reports failures.</summary>
+    private async Task<bool> EnsureSchemaForCurrentUrlAsync()
+    {
+        var url = ResolvedUrl(UrlBox.Text);
+        if (_schema != null && string.Equals(_schemaUrl, url, StringComparison.OrdinalIgnoreCase)) return true;
+        if (SchemaCache.TryGetValue(url, out var cached))
+        {
+            SetSchema(cached, url);
+            return true;
+        }
+        return await FetchSchemaAsync(quiet: true, reportErrors: true);
+    }
+
+    private void SetSchema(GqlSchema schema, string url)
     {
         _schema = schema;
+        _schemaUrl = url;
         DocsPanel.Schema = schema;
         SchemaStatus.Text = $"{schema.Types.Count(t => !t.Key.StartsWith("__"))} types";
     }
@@ -601,8 +617,8 @@ public sealed partial class RequestEditor : UserControl
     private async void TransformVariables(
         Func<string, string, GqlSchema?, VariableTransformResult> transform, string title)
     {
-        // The schema gives exact types (ID!, enums, input objects); without it scalars are inferred.
-        if (_schema == null && !string.IsNullOrWhiteSpace(UrlBox.Text)) await FetchSchemaAsync(quiet: true);
+        // The schema gives exact types (ID!, enums, input objects); without it enums can't be told apart from strings.
+        if (!await EnsureSchemaForCurrentUrlAsync()) return;
 
         VariableTransformResult result;
         try

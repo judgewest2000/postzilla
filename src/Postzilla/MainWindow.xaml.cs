@@ -202,6 +202,109 @@ public sealed partial class MainWindow : Window
     private static List<CollectionNode> ChildListOf(TreeEntry entry) =>
         entry.Kind == TreeEntryKind.Collection ? entry.Collection.Items : entry.Node!.Children;
 
+    // ------------------------------------------------------------------ drag & drop
+
+    private TreeEntry? _dragEntry;
+    private DragEventHandler? _dragOverHandler, _dragLeaveHandler, _dropHandler;
+
+    private sealed record DropTarget(List<CollectionNode> List, int Index, string Caption, Thickness Indicator);
+
+    // TreeViewItem handles drag events internally, so subscribe with handledEventsToo.
+    private void TreeItem_Loaded(object sender, RoutedEventArgs e)
+    {
+        var item = (TreeViewItem)sender;
+        _dragOverHandler ??= TreeItem_DragOver;
+        _dragLeaveHandler ??= TreeItem_DragLeave;
+        _dropHandler ??= TreeItem_Drop;
+        item.RemoveHandler(UIElement.DragOverEvent, _dragOverHandler);
+        item.RemoveHandler(UIElement.DragLeaveEvent, _dragLeaveHandler);
+        item.RemoveHandler(UIElement.DropEvent, _dropHandler);
+        item.AddHandler(UIElement.DragOverEvent, _dragOverHandler, true);
+        item.AddHandler(UIElement.DragLeaveEvent, _dragLeaveHandler, true);
+        item.AddHandler(UIElement.DropEvent, _dropHandler, true);
+    }
+
+    private void CollectionTree_DragItemsStarting(TreeView sender, TreeViewDragItemsStartingEventArgs args)
+    {
+        _dragEntry = args.Items.FirstOrDefault() as TreeEntry;
+        if (_dragEntry?.Node == null) { args.Cancel = true; return; }
+        args.Data.RequestedOperation = DataPackageOperation.Move;
+        args.Data.SetText(_dragEntry.Label);
+    }
+
+    private DropTarget? ResolveDrop(TreeViewItem item, DragEventArgs e)
+    {
+        if (_dragEntry?.Node is not { } dragged) return null;
+        var target = EntryFromElement(item);
+        if (target == null || target.Node == dragged) return null;
+
+        if (target.Kind != TreeEntryKind.Request)
+        {
+            var list = ChildListOf(target);
+            return new DropTarget(list, list.Count, $"Move into {target.Label}", new Thickness(1));
+        }
+
+        var parentList = target.Collection.FindParentList(target.Node!);
+        if (parentList == null) return null;
+        var before = e.GetPosition(item).Y < item.ActualHeight / 2;
+        var index = parentList.IndexOf(target.Node!) + (before ? 0 : 1);
+        return new DropTarget(parentList, index, $"Move {(before ? "before" : "after")} {target.Label}",
+            before ? new Thickness(0, 2, 0, 0) : new Thickness(0, 0, 0, 2));
+    }
+
+    private void TreeItem_DragOver(object sender, DragEventArgs e)
+    {
+        var item = (TreeViewItem)sender;
+        var drop = ResolveDrop(item, e);
+        e.Handled = true;
+        if (drop == null || ApiCollection.IsWithin(_dragEntry!.Node!, drop.List))
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            ClearDropIndicator(item);
+            return;
+        }
+        e.AcceptedOperation = DataPackageOperation.Move;
+        e.DragUIOverride.Caption = drop.Caption;
+        e.DragUIOverride.IsGlyphVisible = false;
+        item.BorderBrush = (Brush)Application.Current.Resources["AccentFillColorDefaultBrush"];
+        item.BorderThickness = drop.Indicator;
+    }
+
+    private void TreeItem_DragLeave(object sender, DragEventArgs e) => ClearDropIndicator((TreeViewItem)sender);
+
+    private static void ClearDropIndicator(TreeViewItem item)
+    {
+        item.ClearValue(Control.BorderBrushProperty);
+        item.ClearValue(Control.BorderThicknessProperty);
+    }
+
+    private void TreeItem_Drop(object sender, DragEventArgs e)
+    {
+        var item = (TreeViewItem)sender;
+        ClearDropIndicator(item);
+        e.Handled = true;
+        var dragged = _dragEntry;
+        var drop = ResolveDrop(item, e);
+        _dragEntry = null;
+        if (dragged?.Node is not { } node || drop == null || EntryFromElement(item) is not { } target) return;
+
+        var from = dragged.Collection;
+        var to = target.Collection;
+        if (!ApiCollection.MoveNode(from, node, to, drop.List, drop.Index)) return;
+
+        // Save the destination first so a failure can't lose the request.
+        _store.Save(to);
+        if (from != to) _store.Save(from);
+        foreach (var (_, editor) in OpenEditors)
+        {
+            if (editor.Collection != from || from == to || editor.Node == null || to.FindParentList(editor.Node) == null) continue;
+            editor.Collection = to;
+            editor.NotifyStateChanged();
+        }
+        RebuildTree();
+        if (target.Kind != TreeEntryKind.Request && FindEntry(target.Id) is { } parent) parent.IsExpanded = true;
+    }
+
     private void SaveCollection(ApiCollection c, string? expandId = null)
     {
         _store.Save(c);
