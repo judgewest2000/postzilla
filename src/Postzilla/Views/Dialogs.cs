@@ -42,7 +42,7 @@ public static class Dialogs
         {
             Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
                 new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "AboutArt.png"))),
-            Width = 240, Height = 240,
+            Width = 160, Height = 160,
             HorizontalAlignment = HorizontalAlignment.Center,
         };
 
@@ -65,15 +65,16 @@ public static class Dialogs
             shortcuts.Children.Add(k); shortcuts.Children.Add(a);
         }
 
-        var panel = new StackPanel { Spacing = 10, Width = 380 };
-        panel.Children.Add(art);
-        panel.Children.Add(new TextBlock
+        var overview = new StackPanel { Spacing = 10, Width = 220 };
+        var panel = new StackPanel { Spacing = 10 };
+        overview.Children.Add(art);
+        overview.Children.Add(new TextBlock
         {
             Text = "Postzilla", HorizontalAlignment = HorizontalAlignment.Center,
             Style = (Style)Application.Current.Resources["TitleTextBlockStyle"],
         });
-        panel.Children.Add(new TextBlock { Text = $"Version {version}", Foreground = secondary, HorizontalAlignment = HorizontalAlignment.Center });
-        panel.Children.Add(new TextBlock
+        overview.Children.Add(new TextBlock { Text = $"Version {version}", Foreground = secondary, HorizontalAlignment = HorizontalAlignment.Center });
+        overview.Children.Add(new TextBlock
         {
             Text = "A lightweight API client for HTTP and GraphQL — collections, cURL import and schema docs.",
             TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 4, 0, 8),
@@ -92,13 +93,21 @@ public static class Dialogs
             Padding = new Thickness(0),
         });
 
+        var layout = new Grid { ColumnSpacing = 24, Width = Math.Min(900, Math.Max(0, root.Size.Width - 96)) };
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(panel, 1);
+        layout.Children.Add(overview);
+        layout.Children.Add(panel);
         var dialog = new ContentDialog
         {
             XamlRoot = root,
-            Content = new ScrollViewer { Content = panel },
+            Content = new ScrollViewer { Content = layout },
             CloseButtonText = "Close",
             DefaultButton = ContentDialogButton.Close,
         };
+        dialog.Resources["ContentDialogMaxWidth"] = 1000.0;
+        dialog.Resources["ContentDialogMaxHeight"] = Math.Max(0, root.Size.Height - 48);
 
         UpdateInfo? found = null;
         var checkResult = new TextBlock { Foreground = secondary, TextWrapping = TextWrapping.Wrap };
