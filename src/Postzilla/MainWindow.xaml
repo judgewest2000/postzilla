@@ -25,6 +25,9 @@
             <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <Image x:Name="TitleBarIcon" Width="20" Height="20" VerticalAlignment="Center" />
                 <TextBlock Text="Postzilla" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Border x:Name="TitleEnvBadge" CornerRadius="4" Padding="8,2,8,3" VerticalAlignment="Center" Visibility="Collapsed">
+                    <TextBlock x:Name="TitleEnvText" FontSize="11" FontWeight="Bold" CharacterSpacing="40" />
+                </Border>
             </StackPanel>
         </Grid>
 

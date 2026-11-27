@@ -106,7 +106,9 @@ public sealed class AppEnvironment
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "New Environment";
+    /// <summary>#RRGGBB used to tint the window while this environment is active; null for no colour.</summary>
+    public string? Color { get; set; }
     public List<KeyValueItem> Variables { get; set; } = new();
 
-    public AppEnvironment Clone() => new() { Id = Id, Name = Name, Variables = KeyValueItem.CloneList(Variables) };
+    public AppEnvironment Clone() => new() { Id = Id, Name = Name, Color = Color, Variables = KeyValueItem.CloneList(Variables) };
 }

@@ -79,15 +79,54 @@ public sealed partial class MainWindow : Window
         var activeId = _activeEnvironment?.Id;
         EnvironmentBox.Items.Clear();
         EnvironmentBox.Items.Add("No environment");
-        foreach (var e in _environments) EnvironmentBox.Items.Add(e.Name);
+        foreach (var e in _environments) EnvironmentBox.Items.Add(EnvironmentItem(e));
         var index = _environments.FindIndex(e => e.Id == activeId);
         EnvironmentBox.SelectedIndex = index + 1;
+    }
+
+    private static object EnvironmentItem(AppEnvironment environment)
+    {
+        if (EnvironmentColors.Brush(environment.Color) is not { } brush) return environment.Name;
+        var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        item.Children.Add(new Border { Width = 12, Height = 12, CornerRadius = new CornerRadius(3), Background = brush, VerticalAlignment = VerticalAlignment.Center });
+        item.Children.Add(new TextBlock { Text = environment.Name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+        return item;
     }
 
     private void EnvironmentBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var index = EnvironmentBox.SelectedIndex - 1;
         _activeEnvironment = index >= 0 && index < _environments.Count ? _environments[index] : null;
+        ApplyEnvironmentColor();
+    }
+
+    /// <summary>Tints the title bar and tabs with the active environment's colour, so you always know where requests go.</summary>
+    private void ApplyEnvironmentColor()
+    {
+        var color = EnvironmentColors.TryParse(_activeEnvironment?.Color);
+        if (color is { } c)
+        {
+            AppTitleBar.Background = new SolidColorBrush(EnvironmentColors.WithAlpha(c, 0x50));
+            TitleEnvBadge.Background = new SolidColorBrush(c);
+            TitleEnvText.Foreground = new SolidColorBrush(EnvironmentColors.ContrastText(c));
+            TitleEnvText.Text = _activeEnvironment!.Name.ToUpperInvariant();
+            TitleEnvBadge.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            AppTitleBar.Background = null;
+            TitleEnvBadge.Visibility = Visibility.Collapsed;
+        }
+        Title = _activeEnvironment != null ? $"Postzilla - {_activeEnvironment.Name}" : "Postzilla";
+        foreach (var (tab, _) in OpenEditors) ApplyTabColor(tab);
+    }
+
+    private void ApplyTabColor(TabViewItem tab)
+    {
+        if (EnvironmentColors.TryParse(_activeEnvironment?.Color) is { } c)
+            tab.Background = new SolidColorBrush(EnvironmentColors.WithAlpha(c, 0x30));
+        else
+            tab.ClearValue(Control.BackgroundProperty);
     }
 
     private async void About_Click(object sender, RoutedEventArgs e)
@@ -112,6 +151,7 @@ public sealed partial class MainWindow : Window
         _activeEnvironment = _environments.FirstOrDefault(x => x.Id == _activeEnvironment?.Id);
         _store.SaveEnvironments(_environments);
         RefreshEnvironmentBox();
+        ApplyEnvironmentColor();
     }
 
     // ------------------------------------------------------------------ tree
@@ -577,6 +617,7 @@ public sealed partial class MainWindow : Window
         editor.StateChanged += (_, _) => UpdateTabHeader(tab, editor);
         editor.SaveRequested += async (_, _) => await SaveEditorAsync(editor);
         UpdateTabHeader(tab, editor);
+        ApplyTabColor(tab);
         Tabs.TabItems.Add(tab);
         Tabs.SelectedItem = tab;
     }

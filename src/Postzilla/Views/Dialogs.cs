@@ -267,10 +267,74 @@ public static class Dialogs
         var deleteButton = new Button { Content = "Delete" };
         var editor = new KeyValueEditor { Items = items, Width = 620, Height = 340, KeyLabel = "Variable" };
 
+        string? color = null;
+        var colorPicker = new ColorPicker
+        {
+            IsAlphaEnabled = false,
+            IsMoreButtonVisible = false,
+            IsColorSliderVisible = true,
+            IsColorChannelTextInputVisible = false,
+            IsHexInputVisible = true,
+            ColorSpectrumShape = ColorSpectrumShape.Ring,
+            Visibility = Visibility.Collapsed,
+        };
+        var swatches = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var noneSwatch = new Button
+        {
+            Width = 28, Height = 28, Padding = new Thickness(0), BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(14),
+            Content = new FontIcon { Glyph = "\uE711", FontSize = 12 },
+        };
+        ToolTipService.SetToolTip(noneSwatch, "No colour");
+        swatches.Children.Add(noneSwatch);
+        foreach (var hex in EnvironmentColors.Presets)
+        {
+            var swatch = new Button
+            {
+                Width = 28, Height = 28, Padding = new Thickness(0), Tag = hex,
+                Background = EnvironmentColors.Brush(hex), BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(14),
+            };
+            ToolTipService.SetToolTip(swatch, hex);
+            swatches.Children.Add(swatch);
+        }
+        var customButton = new HyperlinkButton { Content = "Custom colour…", Padding = new Thickness(4, 0, 4, 0) };
+        swatches.Children.Add(customButton);
+        var colorPanel = new StackPanel { Spacing = 8 };
+        colorPanel.Children.Add(new TextBlock { Text = "Colour — tints the title bar and tabs while this environment is active" });
+        colorPanel.Children.Add(swatches);
+        colorPanel.Children.Add(colorPicker);
+
+        void UpdateSwatches()
+        {
+            foreach (var b in swatches.Children.OfType<Button>())
+            {
+                var selected = b == noneSwatch ? color == null : string.Equals(color, (string)b.Tag, StringComparison.OrdinalIgnoreCase);
+                b.BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(selected ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Transparent);
+            }
+        }
+        var settingPicker = false;
+        void SetColor(string? hex)
+        {
+            color = hex;
+            if (EnvironmentColors.TryParse(hex) is { } c) { settingPicker = true; colorPicker.Color = c; settingPicker = false; }
+            UpdateSwatches();
+        }
+        noneSwatch.Click += (_, _) => SetColor(null);
+        foreach (var b in swatches.Children.OfType<Button>().Where(b => b.Tag is string))
+            b.Click += (_, _) => SetColor((string)b.Tag);
+        customButton.Click += (_, _) =>
+            colorPicker.Visibility = colorPicker.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        colorPicker.ColorChanged += (_, args) =>
+        {
+            if (settingPicker) return;
+            color = EnvironmentColors.ToHex(args.NewColor);
+            UpdateSwatches();
+        };
+
         void Commit()
         {
             if (current == null) return;
             current.Variables = KeyValueItem.CloneList(items);
+            current.Color = color;
             if (nameBox.Text.Trim().Length > 0) current.Name = nameBox.Text.Trim();
         }
 
@@ -287,7 +351,9 @@ public static class Dialogs
             items.Clear();
             nameBox.Text = env?.Name ?? "";
             if (env != null) foreach (var v in env.Variables) items.Add(v.Clone());
-            nameBox.IsEnabled = editor.IsEnabled = deleteButton.IsEnabled = env != null;
+            SetColor(env?.Color);
+            nameBox.IsEnabled = editor.IsEnabled = deleteButton.IsEnabled = colorPanel.IsHitTestVisible = env != null;
+            colorPanel.Opacity = env != null ? 1 : 0.5;
         }
 
         picker.SelectionChanged += (_, _) =>
@@ -299,7 +365,11 @@ public static class Dialogs
         addButton.Click += (_, _) =>
         {
             Commit();
-            envs.Add(new AppEnvironment { Name = $"Environment {envs.Count + 1}" });
+            envs.Add(new AppEnvironment
+            {
+                Name = $"Environment {envs.Count + 1}",
+                Color = EnvironmentColors.Presets[envs.Count % EnvironmentColors.Presets.Length],
+            });
             current = null;
             RefreshPicker(envs.Count - 1);
         };
@@ -330,12 +400,13 @@ public static class Dialogs
         var panel = new StackPanel { Spacing = 12 };
         panel.Children.Add(top);
         panel.Children.Add(nameBox);
+        panel.Children.Add(colorPanel);
         panel.Children.Add(editor);
 
         RefreshPicker(0);
         if (envs.Count == 0) Show(null);
 
-        var dialog = Create(root, "Environments", panel, "Save");
+        var dialog = Create(root, "Environments", new ScrollViewer { Content = panel }, "Save");
         dialog.Resources["ContentDialogMaxWidth"] = 800.0;
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return null;
         Commit();
