@@ -88,6 +88,13 @@ public sealed partial class RequestEditor : UserControl
 
     public void FocusUrl() => UrlBox.Focus(FocusState.Programmatic);
 
+    /// <summary>Shows the request's collection/folder colour as a line along the top; null hides it.</summary>
+    public void SetAccent(Color? color)
+    {
+        RootGrid.BorderThickness = new Thickness(0, 3, 0, 0);
+        RootGrid.BorderBrush = new SolidColorBrush(color ?? Microsoft.UI.Colors.Transparent);
+    }
+
     /// <summary>Releases the embedded code editors; call when the tab is closed.</summary>
     public void Close()
     {

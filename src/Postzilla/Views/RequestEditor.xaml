@@ -6,7 +6,7 @@
     xmlns:views="using:Postzilla.Views"
     xmlns:models="using:Postzilla.Models"
     PreviewKeyDown="Root_PreviewKeyDown">
-    <Grid Padding="16,12,16,12" RowSpacing="10">
+    <Grid x:Name="RootGrid" Padding="16,12,16,12" RowSpacing="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />

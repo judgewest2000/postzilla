@@ -5,7 +5,7 @@ using Windows.UI;
 namespace Postzilla.Views;
 
 /// <summary>Converts environment colours (#RRGGBB) into the brushes used for swatches, tab tints and the title bar.</summary>
-public static class EnvironmentColors
+public static class ColorPalette
 {
     public static readonly string[] Presets =
     [

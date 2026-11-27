@@ -86,7 +86,7 @@ public sealed partial class MainWindow : Window
 
     private static object EnvironmentItem(AppEnvironment environment)
     {
-        if (EnvironmentColors.Brush(environment.Color) is not { } brush) return environment.Name;
+        if (ColorPalette.Brush(environment.Color) is not { } brush) return environment.Name;
         var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         item.Children.Add(new Border { Width = 12, Height = 12, CornerRadius = new CornerRadius(3), Background = brush, VerticalAlignment = VerticalAlignment.Center });
         item.Children.Add(new TextBlock { Text = environment.Name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
@@ -100,33 +100,31 @@ public sealed partial class MainWindow : Window
         ApplyEnvironmentColor();
     }
 
-    /// <summary>Tints the title bar and tabs with the active environment's colour, so you always know where requests go.</summary>
+    /// <summary>
+    /// The outer chrome (title bar and window frame) shows the active environment's colour; the inner parts
+    /// (tabs and request editors) show the collection/folder colour.
+    /// </summary>
     private void ApplyEnvironmentColor()
     {
-        var color = EnvironmentColors.TryParse(_activeEnvironment?.Color);
+        var color = ColorPalette.TryParse(_activeEnvironment?.Color);
         if (color is { } c)
         {
-            AppTitleBar.Background = new SolidColorBrush(EnvironmentColors.WithAlpha(c, 0x50));
+            AppTitleBar.Background = new SolidColorBrush(ColorPalette.WithAlpha(c, 0x50));
             TitleEnvBadge.Background = new SolidColorBrush(c);
-            TitleEnvText.Foreground = new SolidColorBrush(EnvironmentColors.ContrastText(c));
+            TitleEnvText.Foreground = new SolidColorBrush(ColorPalette.ContrastText(c));
             TitleEnvText.Text = _activeEnvironment!.Name.ToUpperInvariant();
             TitleEnvBadge.Visibility = Visibility.Visible;
+            Root.BorderBrush = new SolidColorBrush(c);
+            Root.BorderThickness = new Thickness(2);
         }
         else
         {
             AppTitleBar.Background = null;
             TitleEnvBadge.Visibility = Visibility.Collapsed;
+            Root.BorderBrush = null;
+            Root.BorderThickness = new Thickness(0);
         }
         Title = _activeEnvironment != null ? $"Postzilla - {_activeEnvironment.Name}" : "Postzilla";
-        foreach (var (tab, _) in OpenEditors) ApplyTabColor(tab);
-    }
-
-    private void ApplyTabColor(TabViewItem tab)
-    {
-        if (EnvironmentColors.TryParse(_activeEnvironment?.Color) is { } c)
-            tab.Background = new SolidColorBrush(EnvironmentColors.WithAlpha(c, 0x30));
-        else
-            tab.ClearValue(Control.BackgroundProperty);
     }
 
     private async void About_Click(object sender, RoutedEventArgs e)
@@ -182,7 +180,7 @@ public sealed partial class MainWindow : Window
     {
         foreach (var node in nodes)
         {
-            var entry = TreeEntry.ForNode(c, node);
+            var entry = TreeEntry.ForNode(c, node, parent.EffectiveColor);
             entry.IsExpanded = node.IsFolder && _expandedIds.Contains(entry.Id);
             AddChildren(entry, c, node.Children);
             parent.Children.Add(entry);
@@ -287,6 +285,8 @@ public sealed partial class MainWindow : Window
             Add("Export…", "\uEDE1", () => _ = ExportCollectionAsync(entry.Collection));
         }
         Add("Rename…", "\uE8AC", () => _ = RenameAsync(entry));
+        if (entry.Kind is TreeEntryKind.Collection or TreeEntryKind.Folder)
+            Add("Colour…", "\uE790", () => _ = EditColorAsync(entry));
         if (entry.Kind != TreeEntryKind.Collection) Add("Duplicate", "\uE8C8", () => Duplicate(entry));
         menu.Items.Add(new MenuFlyoutSeparator());
         Add(entry.Kind == TreeEntryKind.Collection ? "Delete collection" : "Delete", "\uE74D", () => _ = DeleteAsync(entry));
@@ -459,6 +459,21 @@ public sealed partial class MainWindow : Window
         SaveCollection(parent.Collection, parent.Id);
     }
 
+    private async Task EditColorAsync(TreeEntry entry)
+    {
+        var isFolder = entry.Kind == TreeEntryKind.Folder;
+        var choice = await Dialogs.PickColorAsync(XamlRoot, $"{entry.Label} — colour",
+            isFolder
+                ? "Tabs for requests in this folder (and its subfolders) are tinted with this colour. With no colour, the folder uses its parent's."
+                : "Tabs for requests in this collection are tinted with this colour. Folders can override it.",
+            isFolder ? "Use the parent's colour" : "No colour",
+            isFolder ? entry.Node!.Color : entry.Collection.Color);
+        if (choice == null) return;
+        if (isFolder) entry.Node!.Color = choice.Color;
+        else entry.Collection.Color = choice.Color;
+        SaveCollection(entry.Collection);
+    }
+
     private async Task RenameAsync(TreeEntry entry)
     {
         var name = await Dialogs.PromptTextAsync(XamlRoot, "Rename", "Name", entry.Label);
@@ -617,7 +632,6 @@ public sealed partial class MainWindow : Window
         editor.StateChanged += (_, _) => UpdateTabHeader(tab, editor);
         editor.SaveRequested += async (_, _) => await SaveEditorAsync(editor);
         UpdateTabHeader(tab, editor);
-        ApplyTabColor(tab);
         Tabs.TabItems.Add(tab);
         Tabs.SelectedItem = tab;
     }
@@ -643,6 +657,20 @@ public sealed partial class MainWindow : Window
             header.Children.Add(new TextBlock { Text = "●", FontSize = 10, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"] });
         tab.Header = header;
         ToolTipService.SetToolTip(tab, editor.Collection != null ? $"{editor.Collection.Name} / {editor.Title}" : editor.Title + " (unsaved)");
+
+        var color = ColorPalette.TryParse(editor.Collection?.ResolveColor(editor.Node));
+        if (color is { } c) tab.Background = new SolidColorBrush(ColorPalette.WithAlpha(c, 0x40));
+        else tab.ClearValue(Control.BackgroundProperty);
+        SetTabResource(tab, "TabViewItemHeaderBackgroundSelected", color, 0x80);
+        SetTabResource(tab, "TabViewItemHeaderBackgroundPointerOver", color, 0x60);
+        SetTabResource(tab, "TabViewItemHeaderBackgroundPressed", color, 0x70);
+        editor.SetAccent(color);
+    }
+
+    private static void SetTabResource(TabViewItem tab, string key, Windows.UI.Color? color, byte alpha)
+    {
+        if (color is { } c) tab.Resources[key] = new SolidColorBrush(ColorPalette.WithAlpha(c, alpha));
+        else tab.Resources.Remove(key);
     }
 
     private async Task<bool> SaveEditorAsync(RequestEditor editor)

@@ -14,21 +14,26 @@ public sealed class TreeEntry : ObservableObject
 {
     private bool _isExpanded;
 
-    private TreeEntry(TreeEntryKind kind, ApiCollection collection, CollectionNode? node)
+    private TreeEntry(TreeEntryKind kind, ApiCollection collection, CollectionNode? node, string? effectiveColor)
     {
         Kind = kind;
         Collection = collection;
         Node = node;
+        EffectiveColor = effectiveColor;
     }
 
-    public static TreeEntry ForCollection(ApiCollection c) => new(TreeEntryKind.Collection, c, null);
+    public static TreeEntry ForCollection(ApiCollection c) => new(TreeEntryKind.Collection, c, null, c.Color);
 
-    public static TreeEntry ForNode(ApiCollection c, CollectionNode n) =>
-        new(n.IsFolder ? TreeEntryKind.Folder : TreeEntryKind.Request, c, n);
+    /// <param name="inheritedColor">The effective colour of the parent folder or collection.</param>
+    public static TreeEntry ForNode(ApiCollection c, CollectionNode n, string? inheritedColor) =>
+        new(n.IsFolder ? TreeEntryKind.Folder : TreeEntryKind.Request, c, n,
+            string.IsNullOrWhiteSpace(n.Color) ? inheritedColor : n.Color);
 
     public TreeEntryKind Kind { get; }
     public ApiCollection Collection { get; }
     public CollectionNode? Node { get; }
+    /// <summary>This entry's own colour, or the one inherited from its folder/collection.</summary>
+    public string? EffectiveColor { get; }
     public ObservableCollection<TreeEntry> Children { get; } = new();
 
     public string Id => Node?.Id ?? Collection.Id;
@@ -42,6 +47,13 @@ public sealed class TreeEntry : ObservableObject
 
     public string Glyph => Kind == TreeEntryKind.Collection ? "\uE8F1" : "\uE8B7";
     public Visibility GlyphVisibility => Kind == TreeEntryKind.Request ? Visibility.Collapsed : Visibility.Visible;
+
+    public Brush GlyphBrush => ColorPalette.Brush(EffectiveColor)
+                               ?? (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"];
+
+    /// <summary>A thin bar beside requests in the colour they inherit, matching their tab.</summary>
+    public Brush ColorBarBrush => (Kind == TreeEntryKind.Request ? ColorPalette.Brush(EffectiveColor) : null)
+                                  ?? new SolidColorBrush(Colors.Transparent);
     public Visibility MethodVisibility => Kind == TreeEntryKind.Request ? Visibility.Visible : Visibility.Collapsed;
 
     public string MethodLabel => (Node?.Request?.Method ?? "") switch

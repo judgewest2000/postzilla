@@ -34,6 +34,8 @@ public sealed class CollectionNode
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "";
     public bool IsFolder { get; set; }
+    /// <summary>#RRGGBB for a folder; null inherits from the parent folder or collection.</summary>
+    public string? Color { get; set; }
     public List<CollectionNode> Children { get; set; } = new();
     public ApiRequest? Request { get; set; }
 
@@ -58,11 +60,36 @@ public sealed class ApiCollection
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "New Collection";
+    /// <summary>#RRGGBB used to tint tabs of requests in this collection; null for no colour.</summary>
+    public string? Color { get; set; }
     public List<KeyValueItem> Variables { get; set; } = new();
     public List<CollectionNode> Items { get; set; } = new();
 
     [System.Text.Json.Serialization.JsonIgnore]
     public string? FilePath { get; set; }
+
+    /// <summary>The colour of the nearest coloured folder containing (or being) <paramref name="node"/>, else the collection's.</summary>
+    public string? ResolveColor(CollectionNode? node)
+    {
+        var path = node == null ? null : FindPath(Items, node);
+        var folderColor = path?.LastOrDefault(n => !string.IsNullOrWhiteSpace(n.Color))?.Color;
+        if (folderColor != null) return folderColor;
+        return string.IsNullOrWhiteSpace(Color) ? null : Color;
+    }
+
+    /// <summary>Nodes from the top level down to <paramref name="node"/> inclusive, or null if it isn't in <paramref name="list"/>.</summary>
+    private static List<CollectionNode>? FindPath(List<CollectionNode> list, CollectionNode node)
+    {
+        foreach (var child in list)
+        {
+            if (child == node) return new List<CollectionNode> { child };
+            var path = FindPath(child.Children, node);
+            if (path == null) continue;
+            path.Insert(0, child);
+            return path;
+        }
+        return null;
+    }
 
     /// <summary>Returns the list that directly contains <paramref name="node"/>.</summary>
     public List<CollectionNode>? FindParentList(CollectionNode node) => FindParentList(Items, node);

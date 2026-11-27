@@ -33,7 +33,7 @@ Use Windows Settings > Apps, or run the one-liner above with `-Uninstall`.
 ## Features
 
 - HTTP requests with params, headers, body and auth, plus `{{variable}}` substitution from collections and environments
-- Colour-coded environments: give an environment a colour (e.g. red for Production), and the title bar and tabs are tinted with it while it's active
+- Colour coding: give collections and folders a colour (right-click > Colour…) to tint their tabs and request editors, with folders overriding their collection. Give environments a colour (e.g. red for Production) to frame the window and tint the title bar while active
 - Native code editor (Scintilla, no WebView) with GraphQL schema autocomplete (Ctrl+Space), docs panel (F1), formatting (Shift+Alt+F) and find (Ctrl+F)
 - Import from cURL and Postman collections
 - Send with Ctrl+Enter or F5

@@ -73,7 +73,9 @@
                             <TreeViewItem ItemsSource="{x:Bind Children}" IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}" HorizontalContentAlignment="Stretch"
                                           AllowDrop="True" Loaded="TreeItem_Loaded">
                                 <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="14" Visibility="{x:Bind GlyphVisibility}" />
+                                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="14" Foreground="{x:Bind GlyphBrush}" Visibility="{x:Bind GlyphVisibility}" />
+                                    <Border Width="3" Height="16" CornerRadius="1.5" Background="{x:Bind ColorBarBrush}" Visibility="{x:Bind MethodVisibility}"
+                                            VerticalAlignment="Center" />
                                     <TextBlock Text="{x:Bind MethodLabel}" Foreground="{x:Bind MethodBrush}" Visibility="{x:Bind MethodVisibility}"
                                                FontSize="11" FontWeight="Bold" Width="32" VerticalAlignment="Center" />
                                     <TextBlock Text="{x:Bind Label}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />

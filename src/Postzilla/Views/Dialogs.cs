@@ -254,6 +254,23 @@ public static class Dialogs
         return await dialog.ShowAsync() == ContentDialogResult.Primary ? items.ToList() : null;
     }
 
+    public sealed class ColorChoice
+    {
+        public string? Color { get; init; }
+    }
+
+    /// <summary>Picks a colour for a collection or folder. Returns null if cancelled; a choice with a null colour clears it.</summary>
+    public static async Task<ColorChoice?> PickColorAsync(XamlRoot root, string title, string description, string noneTooltip, string? current)
+    {
+        var picker = new ColorSwatchPicker(noneTooltip) { Color = current };
+        var panel = new StackPanel { Spacing = 12, Width = 440 };
+        panel.Children.Add(new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(picker);
+        var dialog = Create(root, title, new ScrollViewer { Content = panel }, "Save");
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return null;
+        return new ColorChoice { Color = picker.Color };
+    }
+
     /// <summary>Environment manager. Works on clones; returns the new list or null if cancelled.</summary>
     public static async Task<List<AppEnvironment>?> ManageEnvironmentsAsync(XamlRoot root, IEnumerable<AppEnvironment> environments)
     {
@@ -267,74 +284,15 @@ public static class Dialogs
         var deleteButton = new Button { Content = "Delete" };
         var editor = new KeyValueEditor { Items = items, Width = 620, Height = 340, KeyLabel = "Variable" };
 
-        string? color = null;
-        var colorPicker = new ColorPicker
-        {
-            IsAlphaEnabled = false,
-            IsMoreButtonVisible = false,
-            IsColorSliderVisible = true,
-            IsColorChannelTextInputVisible = false,
-            IsHexInputVisible = true,
-            ColorSpectrumShape = ColorSpectrumShape.Ring,
-            Visibility = Visibility.Collapsed,
-        };
-        var swatches = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        var noneSwatch = new Button
-        {
-            Width = 28, Height = 28, Padding = new Thickness(0), BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(14),
-            Content = new FontIcon { Glyph = "\uE711", FontSize = 12 },
-        };
-        ToolTipService.SetToolTip(noneSwatch, "No colour");
-        swatches.Children.Add(noneSwatch);
-        foreach (var hex in EnvironmentColors.Presets)
-        {
-            var swatch = new Button
-            {
-                Width = 28, Height = 28, Padding = new Thickness(0), Tag = hex,
-                Background = EnvironmentColors.Brush(hex), BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(14),
-            };
-            ToolTipService.SetToolTip(swatch, hex);
-            swatches.Children.Add(swatch);
-        }
-        var customButton = new HyperlinkButton { Content = "Custom colour…", Padding = new Thickness(4, 0, 4, 0) };
-        swatches.Children.Add(customButton);
+        var colorPicker = new ColorSwatchPicker("No colour");
         var colorPanel = new StackPanel { Spacing = 8 };
-        colorPanel.Children.Add(new TextBlock { Text = "Colour — tints the title bar and tabs while this environment is active" });
-        colorPanel.Children.Add(swatches);
+        colorPanel.Children.Add(new TextBlock { Text = "Colour — frames the window and tints the title bar while this environment is active" });
         colorPanel.Children.Add(colorPicker);
-
-        void UpdateSwatches()
-        {
-            foreach (var b in swatches.Children.OfType<Button>())
-            {
-                var selected = b == noneSwatch ? color == null : string.Equals(color, (string)b.Tag, StringComparison.OrdinalIgnoreCase);
-                b.BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(selected ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Transparent);
-            }
-        }
-        var settingPicker = false;
-        void SetColor(string? hex)
-        {
-            color = hex;
-            if (EnvironmentColors.TryParse(hex) is { } c) { settingPicker = true; colorPicker.Color = c; settingPicker = false; }
-            UpdateSwatches();
-        }
-        noneSwatch.Click += (_, _) => SetColor(null);
-        foreach (var b in swatches.Children.OfType<Button>().Where(b => b.Tag is string))
-            b.Click += (_, _) => SetColor((string)b.Tag);
-        customButton.Click += (_, _) =>
-            colorPicker.Visibility = colorPicker.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-        colorPicker.ColorChanged += (_, args) =>
-        {
-            if (settingPicker) return;
-            color = EnvironmentColors.ToHex(args.NewColor);
-            UpdateSwatches();
-        };
-
         void Commit()
         {
             if (current == null) return;
             current.Variables = KeyValueItem.CloneList(items);
-            current.Color = color;
+            current.Color = colorPicker.Color;
             if (nameBox.Text.Trim().Length > 0) current.Name = nameBox.Text.Trim();
         }
 
@@ -351,7 +309,7 @@ public static class Dialogs
             items.Clear();
             nameBox.Text = env?.Name ?? "";
             if (env != null) foreach (var v in env.Variables) items.Add(v.Clone());
-            SetColor(env?.Color);
+            colorPicker.Color = env?.Color;
             nameBox.IsEnabled = editor.IsEnabled = deleteButton.IsEnabled = colorPanel.IsHitTestVisible = env != null;
             colorPanel.Opacity = env != null ? 1 : 0.5;
         }
@@ -368,7 +326,7 @@ public static class Dialogs
             envs.Add(new AppEnvironment
             {
                 Name = $"Environment {envs.Count + 1}",
-                Color = EnvironmentColors.Presets[envs.Count % EnvironmentColors.Presets.Length],
+                Color = ColorPalette.Presets[envs.Count % ColorPalette.Presets.Length],
             });
             current = null;
             RefreshPicker(envs.Count - 1);
